@@ -7,7 +7,7 @@ services:
       context: .
       dockerfile: Dockerfile.event_gateway
     ports:
-      - "8001:8001"
+      - "48001:8001"
     volumes:
       - ./services/event_gateway:/app
     environment:
@@ -25,7 +25,7 @@ services:
       context: .
       dockerfile: Dockerfile.chat_gateway
     ports:
-      - "8002:8002"
+      - "48002:8002"
     volumes:
       - ./services/chat_gateway:/app
     environment:
@@ -44,7 +44,7 @@ services:
       context: .
       dockerfile: Dockerfile.sub_agent
     ports:
-      - "8000:8000"
+      - "48010:8000"
     volumes:
       - ./services/sub_agent:/app
     environment:
@@ -65,7 +65,7 @@ services:
       context: .
       dockerfile: Dockerfile.supervisor
     ports:
-      - "8003:8003"
+      - "48003:8003"
     volumes:
       - ./services/supervisor:/app
     environment:
@@ -84,7 +84,7 @@ services:
       context: .
       dockerfile: Dockerfile.mcp_server
     ports:
-      - "8004:8004"
+      - "48004:8004"
     volumes:
       - ./services/mcp_server:/app
     environment:
@@ -104,7 +104,7 @@ services:
       context: .
       dockerfile: Dockerfile.tool_registry
     ports:
-      - "8005:8005"
+      - "48005:8005"
     volumes:
       - ./services/tool_registry:/app
     networks:
@@ -124,11 +124,11 @@ services:
       - CHAINLIT_SERVER_HOST=0.0.0.0
       - CHAINLIT_MAX_TOKENS=2000
       - CHAINLIT_HIDE_COT=true
-      - CHAT_GATEWAY_URL=http://chat-gateway:8002
-      - SUPERVISOR_URL=http://supervisor:8003
-      - TOOL_REGISTRY_URL=http://tool-registry:8005
-      - EVENT_GATEWAY_URL=http://event-gateway:8001
-      - MCP_SERVER_URL=http://mcp-server:8004
+      - CHAT_GATEWAY_URL=http://chat-gateway:48002
+      - SUPERVISOR_URL=http://supervisor:48003
+      - TOOL_REGISTRY_URL=http://tool-registry:48005
+      - EVENT_GATEWAY_URL=http://event-gateway:48001
+      - MCP_SERVER_URL=http://mcp-server:48004
     volumes:
       - ./services/frontend:/app
       - frontend-chainlit:/app/.chainlit
