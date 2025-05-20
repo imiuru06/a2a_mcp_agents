@@ -50,7 +50,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "46379:6379"
     volumes:
       - redis-data:/data
     command: redis-server --appendonly yes
@@ -287,7 +287,7 @@ services:
     ports:
       - "49090:9090"
     volumes:
-      - ./monitoring/prometheus:/etc/prometheus
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus-data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -299,7 +299,7 @@ services:
     ports:
       - "43000:3000"
     volumes:
-      - ./monitoring/grafana:/etc/grafana/provisioning
+      - ./monitoring/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
       - grafana-data:/var/lib/grafana
     depends_on:
       - prometheus
