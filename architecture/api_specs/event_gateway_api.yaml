@@ -1,0 +1,307 @@
+openapi: 3.0.3
+info:
+  title: Event Gateway API
+  description: |
+    Event Gateway API는 모니터링 시스템에서 발생한 이벤트를 수신하여 
+    Sub-Agent로 전달하는 역할을 담당합니다.
+  version: 1.0.0
+  contact:
+    name: A2A-MCP Team
+    email: a2a-mcp-team@example.com
+
+servers:
+  - url: https://api.example.com/v1
+    description: 프로덕션 서버
+  - url: https://staging-api.example.com/v1
+    description: 스테이징 서버
+  - url: http://localhost:8000/v1
+    description: 로컬 개발 서버
+
+tags:
+  - name: events
+    description: 이벤트 관련 엔드포인트
+  - name: health
+    description: 상태 확인 엔드포인트
+
+paths:
+  /events:
+    post:
+      summary: 새 이벤트 수신
+      description: |
+        모니터링 시스템에서 발생한 이벤트를 수신하여 처리합니다.
+        이벤트는 유효성 검사 후 적절한 Sub-Agent로 전달됩니다.
+      operationId: receiveEvent
+      tags:
+        - events
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventPayload'
+      responses:
+        '202':
+          description: 이벤트가 성공적으로 수신되어 처리 중
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventResponse'
+        '400':
+          description: 잘못된 요청 형식
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: 요청 빈도 제한 초과
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+              description: 재시도 가능한 시간(초)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 서버 내부 오류
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      x-codegen-request-body-name: event
+
+  /events/{event_id}:
+    get:
+      summary: 이벤트 상태 조회
+      description: 특정 이벤트의 처리 상태를 조회합니다.
+      operationId: getEventStatus
+      tags:
+        - events
+      parameters:
+        - name: event_id
+          in: path
+          description: 조회할 이벤트 ID
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 이벤트 상태 조회 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventStatusResponse'
+        '404':
+          description: 이벤트를 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 서버 내부 오류
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /health:
+    get:
+      summary: 서비스 상태 확인
+      description: Event Gateway 서비스의 상태를 확인합니다.
+      operationId: checkHealth
+      tags:
+        - health
+      responses:
+        '200':
+          description: 서비스가 정상 작동 중
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: 서비스 이용 불가
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    EventPayload:
+      type: object
+      required:
+        - event_type
+        - source
+        - timestamp
+        - data
+      properties:
+        event_type:
+          type: string
+          description: 이벤트 유형
+          example: cpu_high_usage
+        source:
+          type: string
+          description: 이벤트 소스
+          example: monitoring_system
+        timestamp:
+          type: string
+          format: date-time
+          description: 이벤트 발생 시간
+          example: '2023-05-01T12:34:56Z'
+        severity:
+          type: string
+          enum: [info, warning, error, critical]
+          description: 이벤트 심각도
+          default: info
+          example: warning
+        data:
+          type: object
+          description: 이벤트 데이터
+          example:
+            host_id: server-123
+            cpu_usage: 95.2
+            memory_usage: 87.5
+            process_count: 234
+        metadata:
+          type: object
+          description: 이벤트 메타데이터
+          example:
+            region: us-west-1
+            environment: production
+            tags: ["database", "postgres"]
+
+    EventResponse:
+      type: object
+      required:
+        - event_id
+        - status
+        - message
+      properties:
+        event_id:
+          type: string
+          format: uuid
+          description: 생성된 이벤트 ID
+          example: 123e4567-e89b-12d3-a456-426614174000
+        status:
+          type: string
+          description: 이벤트 처리 상태
+          example: received
+        message:
+          type: string
+          description: 상태 메시지
+          example: 이벤트가 성공적으로 수신되었습니다.
+        timestamp:
+          type: string
+          format: date-time
+          description: 응답 시간
+          example: '2023-05-01T12:34:57Z'
+
+    EventStatusResponse:
+      type: object
+      required:
+        - event_id
+        - status
+      properties:
+        event_id:
+          type: string
+          format: uuid
+          description: 이벤트 ID
+          example: 123e4567-e89b-12d3-a456-426614174000
+        status:
+          type: string
+          enum: [received, processing, forwarded, completed, failed]
+          description: 이벤트 처리 상태
+          example: processing
+        timestamp:
+          type: string
+          format: date-time
+          description: 상태 업데이트 시간
+          example: '2023-05-01T12:34:59Z'
+        destination:
+          type: string
+          description: 이벤트가 전달된 Sub-Agent ID
+          example: cpu-usage-analyzer-agent
+        details:
+          type: object
+          description: 추가 상태 정보
+          example:
+            retry_count: 0
+            processing_time_ms: 123
+
+    HealthResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, down]
+          description: 서비스 상태
+          example: ok
+        version:
+          type: string
+          description: 서비스 버전
+          example: 1.0.0
+        uptime:
+          type: integer
+          description: 서비스 가동 시간(초)
+          example: 3600
+        timestamp:
+          type: string
+          format: date-time
+          description: 응답 시간
+          example: '2023-05-01T12:35:00Z'
+        dependencies:
+          type: object
+          description: 의존성 서비스 상태
+          example:
+            database: ok
+            cache: ok
+            message_broker: ok
+
+    ErrorResponse:
+      type: object
+      required:
+        - error_code
+        - message
+      properties:
+        error_code:
+          type: string
+          description: 오류 코드
+          example: INVALID_REQUEST
+        message:
+          type: string
+          description: 오류 메시지
+          example: 잘못된 요청 형식입니다.
+        details:
+          type: object
+          description: 추가 오류 정보
+          example:
+            validation_errors:
+              - field: data.cpu_usage
+                message: 필수 필드입니다.
+        request_id:
+          type: string
+          description: 요청 추적 ID
+          example: req-abc123
+        timestamp:
+          type: string
+          format: date-time
+          description: 오류 발생 시간
+          example: '2023-05-01T12:34:58Z'
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+security:
+  - ApiKeyAuth: []
+  - BearerAuth: [] 

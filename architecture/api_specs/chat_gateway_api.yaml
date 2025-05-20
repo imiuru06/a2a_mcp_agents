@@ -1,0 +1,625 @@
+openapi: 3.0.3
+info:
+  title: Chat Gateway API
+  description: |
+    Chat Gateway API는 사용자의 채팅 메시지, 인터럽트 요청, 상태 조회 요청을 
+    적절한 Agent로 라우팅하는 역할을 담당합니다.
+  version: 1.0.0
+  contact:
+    name: A2A-MCP Team
+    email: a2a-mcp-team@example.com
+
+servers:
+  - url: https://chat-api.example.com/v1
+    description: 프로덕션 서버
+  - url: https://staging-chat-api.example.com/v1
+    description: 스테이징 서버
+  - url: http://localhost:8001/v1
+    description: 로컬 개발 서버
+
+tags:
+  - name: chat
+    description: 채팅 메시지 관련 엔드포인트
+  - name: interrupt
+    description: 작업 인터럽트 관련 엔드포인트
+  - name: status
+    description: 작업 상태 조회 관련 엔드포인트
+  - name: session
+    description: 세션 관리 관련 엔드포인트
+  - name: health
+    description: 상태 확인 엔드포인트
+
+paths:
+  /chat:
+    post:
+      summary: 채팅 메시지 전송
+      description: |
+        사용자의 채팅 메시지를 지정된 Agent로 전달합니다.
+        Agent ID는 HTTP 헤더를 통해 지정됩니다.
+      operationId: sendChatMessage
+      tags:
+        - chat
+      parameters:
+        - name: agent-id
+          in: header
+          description: 메시지를 전달할 Agent ID
+          required: true
+          schema:
+            type: string
+            example: supervisor_agent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatMessage'
+      responses:
+        '202':
+          description: 메시지가 성공적으로 전달됨
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+        '400':
+          description: 잘못된 요청 형식
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Agent를 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 서버 내부 오류
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      x-codegen-request-body-name: message
+
+  /chat/stream:
+    get:
+      summary: 채팅 응답 스트림 연결
+      description: |
+        SSE(Server-Sent Events)를 통해 Agent의 응답을 실시간으로 스트리밍합니다.
+        conversation_id를 통해 특정 대화에 대한 응답을 받습니다.
+      operationId: streamChatResponse
+      tags:
+        - chat
+      parameters:
+        - name: conversation_id
+          in: query
+          description: 대화 ID
+          required: true
+          schema:
+            type: string
+            format: uuid
+            example: 123e4567-e89b-12d3-a456-426614174000
+      responses:
+        '200':
+          description: 스트림 연결 성공
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                format: binary
+                description: SSE 스트림
+        '400':
+          description: 잘못된 요청 형식
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 대화를 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /agent/{agent_id}/interrupt:
+    post:
+      summary: 작업 인터럽트 요청
+      description: |
+        특정 Agent에서 실행 중인 작업을 중단하도록 요청합니다.
+        run_id를 통해 특정 실행을 지정합니다.
+      operationId: interruptRun
+      tags:
+        - interrupt
+      parameters:
+        - name: agent_id
+          in: path
+          description: Agent ID
+          required: true
+          schema:
+            type: string
+            example: mechanic_agent
+        - name: run_id
+          in: query
+          description: 실행 ID
+          required: true
+          schema:
+            type: string
+            format: uuid
+            example: 123e4567-e89b-12d3-a456-426614174000
+      responses:
+        '202':
+          description: 인터럽트 요청이 성공적으로 전달됨
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InterruptResponse'
+        '400':
+          description: 잘못된 요청 형식
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Agent 또는 실행을 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 서버 내부 오류
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /agent/{agent_id}/status:
+    get:
+      summary: 작업 상태 조회
+      description: |
+        특정 Agent에서 실행 중인 작업의 상태를 조회합니다.
+        run_id를 통해 특정 실행을 지정합니다.
+      operationId: getRunStatus
+      tags:
+        - status
+      parameters:
+        - name: agent_id
+          in: path
+          description: Agent ID
+          required: true
+          schema:
+            type: string
+            example: mechanic_agent
+        - name: run_id
+          in: query
+          description: 실행 ID
+          required: true
+          schema:
+            type: string
+            format: uuid
+            example: 123e4567-e89b-12d3-a456-426614174000
+      responses:
+        '200':
+          description: 상태 조회 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunStatusResponse'
+        '400':
+          description: 잘못된 요청 형식
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Agent 또는 실행을 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /agent/{agent_id}/status/stream:
+    get:
+      summary: 작업 상태 스트림 연결
+      description: |
+        SSE(Server-Sent Events)를 통해 특정 Agent의 작업 상태를 실시간으로 스트리밍합니다.
+        run_id를 통해 특정 실행을 지정합니다.
+      operationId: streamRunStatus
+      tags:
+        - status
+      parameters:
+        - name: agent_id
+          in: path
+          description: Agent ID
+          required: true
+          schema:
+            type: string
+            example: mechanic_agent
+        - name: run_id
+          in: query
+          description: 실행 ID
+          required: true
+          schema:
+            type: string
+            format: uuid
+            example: 123e4567-e89b-12d3-a456-426614174000
+      responses:
+        '200':
+          description: 스트림 연결 성공
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                format: binary
+                description: SSE 스트림
+        '400':
+          description: 잘못된 요청 형식
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Agent 또는 실행을 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /session:
+    post:
+      summary: 새 세션 생성
+      description: 사용자 인증 후 새 세션을 생성합니다.
+      operationId: createSession
+      tags:
+        - session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionRequest'
+      responses:
+        '201':
+          description: 세션 생성 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+        '400':
+          description: 잘못된 요청 형식
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 서버 내부 오류
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /session/{session_id}:
+    delete:
+      summary: 세션 종료
+      description: 특정 세션을 종료합니다.
+      operationId: endSession
+      tags:
+        - session
+      parameters:
+        - name: session_id
+          in: path
+          description: 세션 ID
+          required: true
+          schema:
+            type: string
+            format: uuid
+            example: 123e4567-e89b-12d3-a456-426614174000
+      responses:
+        '204':
+          description: 세션 종료 성공
+        '404':
+          description: 세션을 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 서버 내부 오류
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /health:
+    get:
+      summary: 서비스 상태 확인
+      description: Chat Gateway 서비스의 상태를 확인합니다.
+      operationId: checkHealth
+      tags:
+        - health
+      responses:
+        '200':
+          description: 서비스가 정상 작동 중
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: 서비스 이용 불가
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    ChatMessage:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          description: 채팅 메시지 내용
+          example: 차량에서 이상한 소리가 나요. 확인해주세요.
+        message_type:
+          type: string
+          enum: [text, command]
+          description: 메시지 유형
+          default: text
+          example: text
+        conversation_id:
+          type: string
+          format: uuid
+          description: 대화 ID (신규 대화인 경우 생략)
+          example: 123e4567-e89b-12d3-a456-426614174000
+        metadata:
+          type: object
+          description: 추가 메타데이터
+          example:
+            user_id: user123
+            client_type: web
+            language: ko
+
+    ChatResponse:
+      type: object
+      required:
+        - conversation_id
+        - status
+      properties:
+        conversation_id:
+          type: string
+          format: uuid
+          description: 대화 ID
+          example: 123e4567-e89b-12d3-a456-426614174000
+        status:
+          type: string
+          enum: [received, processing]
+          description: 메시지 처리 상태
+          example: received
+        message:
+          type: string
+          description: 상태 메시지
+          example: 메시지가 성공적으로 전달되었습니다.
+        stream_url:
+          type: string
+          description: 응답 스트림 URL
+          example: /v1/chat/stream?conversation_id=123e4567-e89b-12d3-a456-426614174000
+        timestamp:
+          type: string
+          format: date-time
+          description: 응답 시간
+          example: '2023-05-01T12:34:57Z'
+
+    InterruptResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [accepted, rejected]
+          description: 인터럽트 요청 상태
+          example: accepted
+        message:
+          type: string
+          description: 상태 메시지
+          example: 인터럽트 요청이 성공적으로 전달되었습니다.
+        agent_id:
+          type: string
+          description: Agent ID
+          example: mechanic_agent
+        run_id:
+          type: string
+          format: uuid
+          description: 실행 ID
+          example: 123e4567-e89b-12d3-a456-426614174000
+        timestamp:
+          type: string
+          format: date-time
+          description: 응답 시간
+          example: '2023-05-01T12:35:00Z'
+
+    RunStatusResponse:
+      type: object
+      required:
+        - run_id
+        - status
+      properties:
+        run_id:
+          type: string
+          format: uuid
+          description: 실행 ID
+          example: 123e4567-e89b-12d3-a456-426614174000
+        agent_id:
+          type: string
+          description: Agent ID
+          example: mechanic_agent
+        status:
+          type: string
+          enum: [pending, running, completed, failed, cancelled]
+          description: 실행 상태
+          example: running
+        progress:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+          description: 진행률(%)
+          example: 45.5
+        start_time:
+          type: string
+          format: date-time
+          description: 시작 시간
+          example: '2023-05-01T12:30:00Z'
+        end_time:
+          type: string
+          format: date-time
+          description: 종료 시간 (완료된 경우)
+          example: null
+        details:
+          type: object
+          description: 추가 상태 정보
+          example:
+            current_step: "진단 중"
+            steps_completed: 2
+            total_steps: 5
+
+    SessionRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          description: 사용자 이름
+          example: user123
+        password:
+          type: string
+          format: password
+          description: 비밀번호
+          example: p@ssw0rd
+        client_info:
+          type: object
+          description: 클라이언트 정보
+          example:
+            client_type: web
+            client_version: 1.0.0
+            user_agent: Mozilla/5.0
+
+    SessionResponse:
+      type: object
+      required:
+        - session_id
+        - token
+      properties:
+        session_id:
+          type: string
+          format: uuid
+          description: 세션 ID
+          example: 123e4567-e89b-12d3-a456-426614174000
+        token:
+          type: string
+          description: 인증 토큰
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        expires_at:
+          type: string
+          format: date-time
+          description: 토큰 만료 시간
+          example: '2023-05-01T14:34:57Z'
+        user:
+          type: object
+          description: 사용자 정보
+          properties:
+            username:
+              type: string
+              description: 사용자 이름
+              example: user123
+            display_name:
+              type: string
+              description: 표시 이름
+              example: 홍길동
+            roles:
+              type: array
+              items:
+                type: string
+              description: 사용자 역할
+              example: ["user", "admin"]
+
+    HealthResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, down]
+          description: 서비스 상태
+          example: ok
+        version:
+          type: string
+          description: 서비스 버전
+          example: 1.0.0
+        uptime:
+          type: integer
+          description: 서비스 가동 시간(초)
+          example: 3600
+        timestamp:
+          type: string
+          format: date-time
+          description: 응답 시간
+          example: '2023-05-01T12:35:00Z'
+        dependencies:
+          type: object
+          description: 의존성 서비스 상태
+          example:
+            redis: ok
+            agent_directory: ok
+
+    ErrorResponse:
+      type: object
+      required:
+        - error_code
+        - message
+      properties:
+        error_code:
+          type: string
+          description: 오류 코드
+          example: AGENT_NOT_FOUND
+        message:
+          type: string
+          description: 오류 메시지
+          example: 지정된 Agent를 찾을 수 없습니다.
+        details:
+          type: object
+          description: 추가 오류 정보
+          example:
+            agent_id: mechanic_agent
+        request_id:
+          type: string
+          description: 요청 추적 ID
+          example: req-abc123
+        timestamp:
+          type: string
+          format: date-time
+          description: 오류 발생 시간
+          example: '2023-05-01T12:34:58Z'
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    SessionAuth:
+      type: apiKey
+      in: header
+      name: X-Session-ID
+
+security:
+  - BearerAuth: []
+  - SessionAuth: [] 

@@ -1,0 +1,156 @@
+version: '3.8'
+
+services:
+  # 경계(Gateway) 계층
+  event-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.event_gateway
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./services/event_gateway:/app
+    environment:
+      - SUB_AGENT_URL=http://sub-agent:8000/events
+    networks:
+      - a2a_mcp_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  chat-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.chat_gateway
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./services/chat_gateway:/app
+    environment:
+      - SUPERVISOR_URL=http://supervisor:8003/messages
+    networks:
+      - a2a_mcp_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # 애플리케이션 계층
+  sub-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.sub_agent
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./services/sub_agent:/app
+    environment:
+      - MCP_SERVER_URL=http://mcp-server:8004/execute
+      - SUPERVISOR_URL=http://supervisor:8003/reports
+    networks:
+      - a2a_mcp_network
+    depends_on:
+      - mcp-server
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  supervisor:
+    build:
+      context: .
+      dockerfile: Dockerfile.supervisor
+    ports:
+      - "8003:8003"
+    volumes:
+      - ./services/supervisor:/app
+    environment:
+      - CHAT_GATEWAY_URL=http://chat-gateway:8002/responses
+    networks:
+      - a2a_mcp_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # 플랫폼 계층
+  mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp_server
+    ports:
+      - "8004:8004"
+    volumes:
+      - ./services/mcp_server:/app
+    environment:
+      - TOOL_REGISTRY_URL=http://tool-registry:8005/tools
+    networks:
+      - a2a_mcp_network
+    depends_on:
+      - tool-registry
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  tool-registry:
+    build:
+      context: .
+      dockerfile: Dockerfile.tool_registry
+    ports:
+      - "8005:8005"
+    volumes:
+      - ./services/tool_registry:/app
+    networks:
+      - a2a_mcp_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build: ./services/frontend
+    ports:
+      - "48000:8000"
+    environment:
+      - CHAINLIT_SERVER_PORT=8000
+      - CHAINLIT_SERVER_HOST=0.0.0.0
+      - CHAINLIT_MAX_TOKENS=2000
+      - CHAINLIT_HIDE_COT=true
+      - CHAT_GATEWAY_URL=http://chat-gateway:8002
+      - SUPERVISOR_URL=http://supervisor:8003
+      - TOOL_REGISTRY_URL=http://tool-registry:8005
+      - EVENT_GATEWAY_URL=http://event-gateway:8001
+      - MCP_SERVER_URL=http://mcp-server:8004
+    volumes:
+      - ./services/frontend:/app
+      - frontend-chainlit:/app/.chainlit
+    depends_on:
+      - chat-gateway
+      - supervisor
+      - tool-registry
+      - event-gateway
+      - mcp-server
+    networks:
+      - a2a_mcp_network
+
+networks:
+  a2a_mcp_network:
+    driver: bridge
+  a2a-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  kafka-data:
+  prometheus-data:
+  grafana-data:
+  frontend-chainlit: 
