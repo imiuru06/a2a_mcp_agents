@@ -1,0 +1,44 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'api-gateway'
+    static_configs:
+      - targets: ['api-gateway:8000']
+
+  - job_name: 'service-registry'
+    static_configs:
+      - targets: ['service-registry:8007']
+
+  - job_name: 'agent-card-registry'
+    static_configs:
+      - targets: ['agent-card-registry:8006']
+
+  - job_name: 'event-gateway'
+    static_configs:
+      - targets: ['event-gateway:8001']
+
+  - job_name: 'chat-gateway'
+    static_configs:
+      - targets: ['chat-gateway:8002']
+
+  - job_name: 'sub-agent'
+    static_configs:
+      - targets: ['sub-agent:8000']
+
+  - job_name: 'supervisor'
+    static_configs:
+      - targets: ['supervisor:8003']
+
+  - job_name: 'mcp-server'
+    static_configs:
+      - targets: ['mcp-server:8004']
+
+  - job_name: 'tool-registry'
+    static_configs:
+      - targets: ['tool-registry:8005']
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

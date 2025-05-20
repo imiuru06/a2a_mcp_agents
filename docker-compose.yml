@@ -31,10 +31,52 @@ services:
       - "48007:8007"
     volumes:
       - ./services/service_registry:/app
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - SERVICE_TTL=60
+    networks:
+      - a2a_mcp_network
+    depends_on:
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8007/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis - 서비스 레지스트리 및 캐싱용
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
     networks:
       - a2a_mcp_network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8007/health"]
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Postgres - 에이전트 카드 레지스트리용
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=agent_registry
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - a2a_mcp_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -67,11 +109,13 @@ services:
     environment:
       - SERVICE_REGISTRY_URL=http://service-registry:8007/services
       - MESSAGE_BROKER_URL=amqp://message-broker:5672
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/agent_registry
     networks:
       - a2a_mcp_network
     depends_on:
       - service-registry
       - message-broker
+      - postgres
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8006/health"]
       interval: 30s
@@ -135,11 +179,13 @@ services:
     environment:
       - SERVICE_REGISTRY_URL=http://service-registry:8007/services
       - MESSAGE_BROKER_URL=amqp://message-broker:5672
+      - AGENT_CARD_REGISTRY_URL=http://agent-card-registry:8006
     networks:
       - a2a_mcp_network
     depends_on:
       - service-registry
       - message-broker
+      - agent-card-registry
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -182,11 +228,13 @@ services:
     environment:
       - SERVICE_REGISTRY_URL=http://service-registry:8007/services
       - MESSAGE_BROKER_URL=amqp://message-broker:5672
+      - TOOL_REGISTRY_URL=http://tool-registry:8005/tools
     networks:
       - a2a_mcp_network
     depends_on:
       - service-registry
       - message-broker
+      - tool-registry
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
       interval: 30s
