@@ -124,11 +124,11 @@ services:
       - CHAINLIT_SERVER_HOST=0.0.0.0
       - CHAINLIT_MAX_TOKENS=2000
       - CHAINLIT_HIDE_COT=true
-      - CHAT_GATEWAY_URL=http://chat-gateway:48002
-      - SUPERVISOR_URL=http://supervisor:48003
-      - TOOL_REGISTRY_URL=http://tool-registry:48005
-      - EVENT_GATEWAY_URL=http://event-gateway:48001
-      - MCP_SERVER_URL=http://mcp-server:48004
+      - CHAT_GATEWAY_URL=http://chat-gateway:8002
+      - SUPERVISOR_URL=http://supervisor:8003
+      - TOOL_REGISTRY_URL=http://tool-registry:8005
+      - EVENT_GATEWAY_URL=http://event-gateway:8001
+      - MCP_SERVER_URL=http://mcp-server:8004
     volumes:
       - ./services/frontend:/app
       - frontend-chainlit:/app/.chainlit
