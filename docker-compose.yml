@@ -85,8 +85,8 @@ services:
   message-broker:
     image: rabbitmq:3-management
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "45672:5672"
+      - "45673:15672"
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
     networks:
@@ -285,7 +285,7 @@ services:
   prometheus:
     image: prom/prometheus
     ports:
-      - "9090:9090"
+      - "49090:9090"
     volumes:
       - ./monitoring/prometheus:/etc/prometheus
       - prometheus-data:/prometheus
@@ -297,7 +297,7 @@ services:
   grafana:
     image: grafana/grafana
     ports:
-      - "3000:3000"
+      - "43000:3000"
     volumes:
       - ./monitoring/grafana:/etc/grafana/provisioning
       - grafana-data:/var/lib/grafana
