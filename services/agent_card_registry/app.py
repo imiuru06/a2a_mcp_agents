@@ -61,7 +61,7 @@ class Agent(Base):
     url = Column(String, nullable=False)  # 에이전트 서비스 URL
     health_check_url = Column(String, nullable=True)
     status = Column(String, default="active")  # active, inactive, error
-    metadata = Column(JSON, nullable=True, default={})
+    agent_metadata = Column(JSON, nullable=True, default={})
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())
     
@@ -76,7 +76,7 @@ class Capability(Base):
     description = Column(String, nullable=True)
     category = Column(String, nullable=True)
     priority = Column(Integer, default=5)  # 1-10 우선순위 (10이 최고)
-    metadata = Column(JSON, nullable=True, default={})
+    capability_metadata = Column(JSON, nullable=True, default={})
     created_at = Column(DateTime, server_default=func.now())
     
     # 관계 설정
@@ -212,7 +212,7 @@ async def create_agent(agent: AgentCreate):
             version=agent.version,
             url=agent.url,
             health_check_url=agent.health_check_url,
-            metadata=agent.metadata
+            agent_metadata=agent.metadata
         )
         
         # 능력 연결
@@ -238,7 +238,7 @@ async def create_agent(agent: AgentCreate):
             url=new_agent.url,
             health_check_url=new_agent.health_check_url,
             status=new_agent.status,
-            metadata=new_agent.metadata,
+            metadata=new_agent.agent_metadata,
             capabilities=[c.name for c in new_agent.capabilities],
             created_at=new_agent.created_at,
             updated_at=new_agent.updated_at
@@ -273,7 +273,7 @@ async def list_agents(
                 url=agent.url,
                 health_check_url=agent.health_check_url,
                 status=agent.status,
-                metadata=agent.metadata,
+                metadata=agent.agent_metadata,
                 capabilities=[c.name for c in agent.capabilities],
                 created_at=agent.created_at,
                 updated_at=agent.updated_at
@@ -300,7 +300,7 @@ async def get_agent(agent_id: str):
             url=agent.url,
             health_check_url=agent.health_check_url,
             status=agent.status,
-            metadata=agent.metadata,
+            metadata=agent.agent_metadata,
             capabilities=[c.name for c in agent.capabilities],
             created_at=agent.created_at,
             updated_at=agent.updated_at
@@ -345,7 +345,7 @@ async def update_agent(agent_id: str, agent_update: AgentUpdate):
             agent.status = agent_update.status
         
         if agent_update.metadata is not None:
-            agent.metadata = agent_update.metadata
+            agent.agent_metadata = agent_update.metadata
         
         if agent_update.capabilities is not None:
             # 기존 능력 연결 제거
@@ -372,7 +372,7 @@ async def update_agent(agent_id: str, agent_update: AgentUpdate):
             url=agent.url,
             health_check_url=agent.health_check_url,
             status=agent.status,
-            metadata=agent.metadata,
+            metadata=agent.agent_metadata,
             capabilities=[c.name for c in agent.capabilities],
             created_at=agent.created_at,
             updated_at=agent.updated_at
@@ -411,7 +411,7 @@ async def create_capability(capability: CapabilityCreate):
             description=capability.description,
             category=capability.category,
             priority=capability.priority,
-            metadata=capability.metadata
+            capability_metadata=capability.metadata
         )
         
         db.add(new_capability)
@@ -424,7 +424,7 @@ async def create_capability(capability: CapabilityCreate):
             description=new_capability.description,
             category=new_capability.category,
             priority=new_capability.priority,
-            metadata=new_capability.metadata,
+            metadata=new_capability.capability_metadata,
             created_at=new_capability.created_at,
             agents=[]
         )
@@ -452,7 +452,7 @@ async def list_capabilities(
                 description=capability.description,
                 category=capability.category,
                 priority=capability.priority,
-                metadata=capability.metadata,
+                metadata=capability.capability_metadata,
                 created_at=capability.created_at,
                 agents=[a.name for a in capability.agents]
             )
@@ -476,7 +476,7 @@ async def get_capability(capability_id: str):
             description=capability.description,
             category=capability.category,
             priority=capability.priority,
-            metadata=capability.metadata,
+            metadata=capability.capability_metadata,
             created_at=capability.created_at,
             agents=[a.name for a in capability.agents]
         )
@@ -514,7 +514,7 @@ async def update_capability(capability_id: str, capability_update: CapabilityUpd
             capability.priority = capability_update.priority
         
         if capability_update.metadata is not None:
-            capability.metadata = capability_update.metadata
+            capability.capability_metadata = capability_update.metadata
         
         db.commit()
         db.refresh(capability)
@@ -525,7 +525,7 @@ async def update_capability(capability_id: str, capability_update: CapabilityUpd
             description=capability.description,
             category=capability.category,
             priority=capability.priority,
-            metadata=capability.metadata,
+            metadata=capability.capability_metadata,
             created_at=capability.created_at,
             agents=[a.name for a in capability.agents]
         )
@@ -561,7 +561,7 @@ async def find_agents(request: FindAgentRequest):
             for key, value in request.metadata_filters.items():
                 # JSON 필드 필터링은 DB에 따라 다를 수 있음
                 # PostgreSQL의 경우 -> 표기법 사용
-                query = query.filter(Agent.metadata[key].astext == str(value))
+                query = query.filter(Agent.agent_metadata[key].astext == str(value))
         
         # 결과 추출 - 잠재적으로 많은 에이전트가 나올 수 있으므로 제한
         potential_agents = query.all()
@@ -593,7 +593,7 @@ async def find_agents(request: FindAgentRequest):
                 url=agent.url,
                 health_check_url=agent.health_check_url,
                 status=agent.status,
-                metadata=agent.metadata,
+                metadata=agent.agent_metadata,
                 capabilities=[c.name for c in agent.capabilities],
                 created_at=agent.created_at,
                 updated_at=agent.updated_at
