@@ -1,4 +1,79 @@
-# A2A와 MCP 프로토콜 기반 자동차 정비 서비스
+# A2A MCP 자동차 정비 서비스 에이전트
+
+A2A(Agent-to-Agent) MCP(Model Context Protocol) 기반의 자동차 정비 서비스 마이크로서비스 시스템입니다. 이 프로젝트는 LangGraph와 Azure OpenAI를 활용하여 에이전트 간 효율적인 통신과 지능적인 자동차 정비 서비스를 제공합니다.
+
+## 주요 기능
+
+1. **지능형 자동차 정비 에이전트**: 사용자의 차량 문제를 진단하고 정비 조언을 제공합니다.
+2. **마이크로서비스 아키텍처**: 독립적인 서비스들이 효율적으로 통신하는 확장 가능한 구조입니다.
+3. **LangGraph 기반 워크플로우**: 다양한 에이전트 노드를 연결하여 복잡한 작업을 처리합니다.
+4. **Azure OpenAI 통합**: 고품질 언어 모델을 활용하여 정확하고 자연스러운 응답을 생성합니다.
+5. **도구 레지스트리**: 에이전트가 사용할 수 있는 다양한 도구를 관리합니다.
+
+## 시스템 구성
+
+### 1. 계층 구조
+
+- **경계 계층**: API Gateway, Chat Gateway, Event Gateway
+- **애플리케이션 계층**: Supervisor, Sub-Agent
+- **플랫폼 계층**: MCP Server, Tool Registry, LLM Registry
+- **인프라 계층**: Service Registry, Message Broker, Database
+
+### 2. 주요 서비스
+
+- **API Gateway**: 모든 외부 요청의 단일 진입점으로 서비스 간 라우팅을 담당합니다.
+- **Supervisor**: LangGraph 기반 워크플로우로 사용자 요청을 관리하고 적절한 에이전트에 작업을 할당합니다.
+- **Sub-Agent**: 특정 도메인(자동차 진단, 정비 등)에 특화된 작업을 수행합니다.
+- **LLM Registry**: Azure OpenAI 등 다양한 언어 모델 서비스를 관리합니다.
+- **Tool Registry**: 에이전트가 사용할 수 있는 도구를 등록하고 관리합니다.
+- **Frontend**: ChainLit 기반의 사용자 인터페이스를 제공합니다.
+
+## LLM 및 에이전트 구성
+
+### Azure OpenAI 통합
+
+- `.env` 파일을 통해 API 키와 엔드포인트를 안전하게 관리합니다.
+- 서비스별로 다양한 모델(GPT-4, GPT-3.5 등)을 유연하게 선택할 수 있습니다.
+- 채팅 완성, 텍스트 완성, 함수 호출 등 다양한 API를 지원합니다.
+
+### LangGraph 워크플로우
+
+- 수퍼바이저 서비스에서 LangGraph 기반 에이전트 워크플로우를 구현했습니다.
+- 메시지 의도에 따라 자동차 진단 에이전트 또는 정비 조언 에이전트로 라우팅합니다.
+- 필요한 정보를 자동으로 검색하여 응답의 품질을 높입니다.
+
+## 시작하기
+
+### 환경 설정
+
+1. 필요한 환경 변수를 `.env` 파일에 설정합니다:
+```
+# Azure OpenAI 설정
+AZURE_OPENAI_API_KEY=your_api_key
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_API_VERSION=2023-05-15
+AZURE_OPENAI_DEPLOYMENT_NAME=your_deployment_name
+```
+
+2. Docker Compose로 서비스 실행:
+```bash
+docker-compose up -d
+```
+
+3. 웹 브라우저에서 프론트엔드 접속:
+```
+http://localhost:48080
+```
+
+## 사용 방법
+
+1. 웹 인터페이스에서 자동차 문제에 대해 질문합니다. (예: "엔진 오일 경고등이 켜졌어요")
+2. 시스템이 LangGraph 워크플로우를 통해 질문을 분석하고 적절한 에이전트를 선택합니다.
+3. 에이전트가 Azure OpenAI를 활용해 진단 및 해결책을 제공합니다.
+
+## 개선 사항
+
+최근 구현된 주요 개선 사항은 [IMPROVEMENTS.md](IMPROVEMENTS.md) 파일에서 확인할 수 있습니다.
 
 ## 프로젝트 개요
 

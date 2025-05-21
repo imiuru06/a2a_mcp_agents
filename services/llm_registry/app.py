@@ -14,10 +14,25 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import httpx
 import asyncio
+from dotenv import load_dotenv
+import time
+
+# 환경 변수 로드
+load_dotenv()
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("llm_registry")
+
+# 환경 변수에서 API 키 로드
+AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY", "")
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "https://your-resource-name.openai.azure.com/")
+AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2023-05-15")
+AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "")
+
+# API 키가 없을 경우 경고
+if not AZURE_OPENAI_API_KEY:
+    logger.warning("AZURE_OPENAI_API_KEY 환경 변수가 설정되지 않았습니다.")
 
 # FastAPI 앱 생성
 app = FastAPI(
@@ -37,6 +52,9 @@ app.add_middleware(
 
 # 서비스 설정
 SERVICE_REGISTRY_URL = os.getenv("SERVICE_REGISTRY_URL", "http://service-registry:8007/services")
+REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "30.0"))
+MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
+RETRY_DELAY = float(os.getenv("RETRY_DELAY", "1.0"))
 
 # 상태 저장소
 llm_services: Dict[str, Dict[str, Any]] = {}
@@ -113,6 +131,35 @@ class StatsResponse(BaseModel):
     average_latency: float
     token_usage: Dict[str, int]
     last_used: Optional[str] = None
+
+class LLMService(BaseModel):
+    service_id: str
+    name: str
+    provider: str
+    model: str
+    api_type: str  # 'azure', 'openai', 'huggingface' 등
+    description: str
+    features: List[str]
+    default_parameters: Dict[str, Any] = {}
+    max_tokens: int = 2000
+    is_active: bool = True
+    auth_required: bool = True
+
+class CompletionRequest(BaseModel):
+    service_id: str
+    prompt: str
+    parameters: Optional[Dict[str, Any]] = None
+
+class ChatCompletionRequest(BaseModel):
+    service_id: str
+    messages: List[Dict[str, Any]]
+    parameters: Optional[Dict[str, Any]] = None
+
+class FunctionCallRequest(BaseModel):
+    service_id: str
+    messages: List[Dict[str, Any]]
+    functions: List[Dict[str, Any]]
+    parameters: Optional[Dict[str, Any]] = None
 
 # API 엔드포인트
 @app.get("/")

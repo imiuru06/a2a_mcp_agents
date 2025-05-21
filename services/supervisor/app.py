@@ -6,19 +6,43 @@
 import uuid
 import os
 from datetime import datetime
-from typing import Dict, List, Optional, Any
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from typing import Dict, List, Optional, Any, TypedDict, Annotated, Sequence, Union, cast, Literal
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import httpx
 import re
 import logging
 import json
 import asyncio
+from dotenv import load_dotenv
+
+# LangGraph 및 관련 라이브러리 임포트
+from langchain.schema import HumanMessage, AIMessage, SystemMessage, FunctionMessage
+from langchain_openai import AzureChatOpenAI
+from langgraph.graph import StateGraph, END
+from langgraph.prebuilt import ToolNode
+from langchain_core.messages import BaseMessage
+import operator
+from functools import partial
+
+# 환경 변수 로드
+load_dotenv()
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("supervisor")
+
+# 환경 변수에서 API 키 로드
+AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY", "")
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "https://your-resource-name.openai.azure.com/")
+AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2023-05-15")
+AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "")
+
+# API 키가 없을 경우 경고
+if not AZURE_OPENAI_API_KEY:
+    logger.warning("AZURE_OPENAI_API_KEY 환경 변수가 설정되지 않았습니다.")
 
 # FastAPI 앱 생성
 app = FastAPI(
@@ -41,14 +65,15 @@ CHAT_GATEWAY_URL = os.getenv("CHAT_GATEWAY_URL", "http://chat-gateway:8002/respo
 AGENT_CARD_REGISTRY_URL = os.getenv("AGENT_CARD_REGISTRY_URL", "http://agent-card-registry:8006")
 SUB_AGENT_URL = os.getenv("SUB_AGENT_URL", "http://sub-agent:8000/events")
 SERVICE_REGISTRY_URL = os.getenv("SERVICE_REGISTRY_URL", "http://service-registry:8007/services")
+LLM_REGISTRY_URL = os.getenv("LLM_REGISTRY_URL", "http://llm-registry:8101")
 
 # 재시도 설정
-MAX_RETRIES = 3
-RETRY_DELAY = 1.0
+MAX_RETRIES = int(os.getenv("MAX_RETRIES", "5"))
+RETRY_DELAY = float(os.getenv("RETRY_DELAY", "2.0"))
 
 # 상태 저장소
 reports_store: Dict[str, Dict[str, Any]] = {}
-messages_store: Dict[str, Dict[str, Any]] = {}
+messages_store: Dict[str, List[Dict[str, Any]]] = {}
 conversation_history: Dict[str, List[Dict[str, Any]]] = {}
 
 # HTTP 클라이언트 생성
@@ -79,6 +104,177 @@ class Event(BaseModel):
     data: Dict[str, Any]
     timestamp: str
 
+class SupervisorMessage(BaseModel):
+    client_id: str
+    message: str
+    timestamp: str = None
+    context: Dict[str, Any] = {}
+
+class GraphState(TypedDict):
+    messages: Annotated[Sequence[BaseMessage], operator.add]
+    next: str
+
+class AgentTool(BaseModel):
+    name: str
+    description: str
+    parameters: Dict[str, Any] = {}
+
+# Azure OpenAI LLM 설정
+def get_llm():
+    return AzureChatOpenAI(
+        azure_endpoint=AZURE_OPENAI_ENDPOINT,
+        azure_deployment=AZURE_OPENAI_DEPLOYMENT_NAME,
+        api_version=AZURE_OPENAI_API_VERSION,
+        api_key=AZURE_OPENAI_API_KEY,
+        temperature=float(os.getenv("LLM_TEMPERATURE", "0.7")),
+        max_tokens=int(os.getenv("LLM_MAX_TOKENS", "1000"))
+    )
+
+# 사용 가능한 도구 목록 가져오기
+async def get_available_tools():
+    try:
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            response = await client.get(f"{os.getenv('TOOL_REGISTRY_URL', 'http://tool-registry:8005/tools')}")
+            if response.status_code == 200:
+                tools = response.json()
+                return [
+                    AgentTool(
+                        name=tool.get("name"),
+                        description=tool.get("description"),
+                        parameters=tool.get("parameters", {})
+                    ) for tool in tools
+                ]
+            return []
+    except Exception as e:
+        logger.error(f"도구 목록 가져오기 오류: {str(e)}")
+        return []
+
+# 에이전트 카드 가져오기
+async def get_agent_cards():
+    try:
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            response = await client.get(f"{AGENT_CARD_REGISTRY_URL}/agents")
+            if response.status_code == 200:
+                return response.json()
+            return []
+    except Exception as e:
+        logger.error(f"에이전트 카드 가져오기 오류: {str(e)}")
+        return []
+
+# LangGraph 노드 함수
+async def retrieve_knowledge(state):
+    """사용자 메시지에 관련된 지식 검색"""
+    messages = state["messages"]
+    last_message = messages[-1]
+    
+    if not isinstance(last_message, HumanMessage):
+        return {"messages": messages}
+    
+    # 실제 구현에서는 벡터 데이터베이스 등에서 검색 수행
+    query = last_message.content
+    
+    try:
+        # 간단한 예시: 키워드 기반 응답
+        knowledge = ""
+        if "엔진 오일" in query:
+            knowledge = "엔진 오일은 일반적으로 5,000~10,000km 주행 후 교체가 권장됩니다."
+        elif "타이어" in query:
+            knowledge = "타이어 공기압은 월 1회 이상 점검하는 것이 좋습니다."
+        elif "브레이크" in query:
+            knowledge = "브레이크 패드는 보통 30,000~70,000km 주행 시 교체가 필요합니다."
+        
+        if knowledge:
+            messages.append(FunctionMessage(content=knowledge, name="retrieve_knowledge"))
+    except Exception as e:
+        logger.error(f"지식 검색 중 오류: {str(e)}")
+    
+    return {"messages": messages}
+
+async def car_diagnostic_agent(state):
+    """자동차 진단 에이전트 노드"""
+    messages = state["messages"]
+    
+    llm = get_llm()
+    system_prompt = """당신은 자동차 정비 전문가입니다. 
+    사용자의 자동차 관련 문제를 진단하고, 적절한 정비 조언을 제공해주세요.
+    한국어로 자세하고 친절하게, 자동차 전문 용어는 가능한 쉽게 설명해주세요."""
+    
+    messages_for_llm = [SystemMessage(content=system_prompt)] + messages
+    
+    response = await llm.ainvoke(messages_for_llm)
+    messages.append(response)
+    
+    return {"messages": messages}
+
+async def maintenance_advisor_agent(state):
+    """정비 조언 에이전트 노드"""
+    messages = state["messages"]
+    
+    llm = get_llm()
+    system_prompt = """당신은 자동차 정비 어드바이저입니다.
+    사용자에게 정비 일정, 비용, 자가 점검 방법 등에 대한 구체적인 조언을 제공해주세요.
+    한국어로 친절하게, 가격 범위나 시간 추정치 등 실용적인 정보를 포함해주세요."""
+    
+    messages_for_llm = [SystemMessage(content=system_prompt)] + messages
+    
+    response = await llm.ainvoke(messages_for_llm)
+    messages.append(response)
+    
+    return {"messages": messages}
+
+async def decide_agent(state):
+    """어떤 에이전트를 실행할지 결정하는 라우터 노드"""
+    messages = state["messages"]
+    last_human_message = None
+    
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            last_human_message = message
+            break
+    
+    if not last_human_message:
+        return "car_diagnostic_agent"
+    
+    query = last_human_message.content.lower()
+    
+    # 간단한 라우팅 로직
+    if "진단" in query or "문제" in query or "고장" in query or "경고등" in query:
+        return "car_diagnostic_agent"
+    elif "비용" in query or "정비소" in query or "점검" in query or "일정" in query:
+        return "maintenance_advisor_agent"
+    else:
+        return "car_diagnostic_agent"  # 기본 에이전트
+
+def create_agent_workflow():
+    """LangGraph 워크플로우 생성"""
+    # 그래프 상태 정의
+    workflow = StateGraph(GraphState)
+    
+    # 지식 검색 노드
+    workflow.add_node("retrieve_knowledge", retrieve_knowledge)
+    
+    # 에이전트 노드들
+    workflow.add_node("car_diagnostic_agent", car_diagnostic_agent)
+    workflow.add_node("maintenance_advisor_agent", maintenance_advisor_agent)
+    
+    # 분기 결정 노드
+    workflow.add_router("decide_agent", decide_agent, [
+        "car_diagnostic_agent", 
+        "maintenance_advisor_agent"
+    ])
+    
+    # 엣지 설정
+    workflow.set_entry_point("retrieve_knowledge")
+    workflow.add_edge("retrieve_knowledge", "decide_agent")
+    workflow.add_edge("car_diagnostic_agent", END)
+    workflow.add_edge("maintenance_advisor_agent", END)
+    
+    # 그래프 컴파일
+    return workflow.compile()
+
+# 워크플로우 인스턴스 생성
+agent_workflow = create_agent_workflow()
+
 # API 엔드포인트
 @app.get("/")
 async def root():
@@ -88,7 +284,7 @@ async def root():
 @app.get("/health")
 async def health_check():
     """헬스 체크 엔드포인트"""
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+    return {"status": "ok", "timestamp": datetime.now().isoformat()}
 
 @app.post("/reports")
 async def receive_report(report: Report, background_tasks: BackgroundTasks):
@@ -155,412 +351,137 @@ def generate_response_from_report(report: Report) -> str:
     return "작업이 완료되었습니다."
 
 @app.post("/messages")
-async def receive_message(message: Dict[str, Any], background_tasks: BackgroundTasks):
-    """Chat Gateway로부터 메시지 수신"""
+async def process_message(message: SupervisorMessage):
+    """메시지 처리 엔드포인트"""
     try:
-        client_id = message.get("client_id")
-        user_message = message.get("message", "")
-        message_id = message.get("message_id", f"msg_{uuid.uuid4().hex[:8]}")
+        client_id = message.client_id
+        user_message = message.message
         
-        logger.info(f"새 메시지 수신: message_id={message_id}, client_id={client_id}")
+        # 타임스탬프 추가
+        if not message.timestamp:
+            message.timestamp = datetime.now().isoformat()
         
         # 메시지 저장
-        stored_message = {
-            "message_id": message_id,
-            "client_id": client_id,
-            "message": user_message,
-            "timestamp": datetime.now().isoformat(),
-            "status": "received",
-            "role": "user"
-        }
+        if client_id not in messages_store:
+            messages_store[client_id] = []
         
-        messages_store[message_id] = stored_message
+        messages_store[client_id].append(message.dict())
         
-        # 대화 기록 업데이트
-        if client_id not in conversation_history:
-            conversation_history[client_id] = []
+        # 비동기 응답 처리 시작
+        asyncio.create_task(process_and_respond(client_id, user_message, message.context))
         
-        conversation_history[client_id].append(stored_message)
-        
-        # 메시지 의도 분석 및 처리
-        background_tasks.add_task(process_user_message, client_id, user_message)
-        
-        # 즉시 접수 확인 응답
-        background_tasks.add_task(
-            send_response_to_user,
-            client_id,
-            "메시지를 받았습니다. 처리 중입니다...",
-            "status"
-        )
-        
-        return {"status": "accepted", "message_id": message_id}
+        return {"status": "accepted", "client_id": client_id, "message": "메시지가 접수되었습니다."}
+    
     except Exception as e:
-        logger.error(f"메시지 수신 처리 중 오류 발생: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"메시지 처리 중 오류 발생: {str(e)}")
+        logger.error(f"메시지 처리 중 오류: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"메시지 처리 중 오류: {str(e)}")
 
-async def process_user_message(client_id: str, user_message: str):
-    """사용자 메시지 처리 및 적절한 응답 생성"""
-    try:
-        logger.info(f"메시지 처리 시작: client_id={client_id}")
-        
-        # 메시지 의도 분석
-        intent, entities = analyze_message_intent(user_message)
-        logger.info(f"메시지 의도 분석 결과: intent={intent}, entities={entities}")
-        
-        # 적절한 에이전트 찾기
-        agent = await find_appropriate_agent(intent)
-        
-        if "테스트" in user_message:
-            # 테스트 메시지 특별 처리
-            response = "테스트 메시지를 확인했습니다. 시스템이 정상 작동 중입니다."
-        elif intent == "car_issue" and "엔진 오일" in user_message and "경고등" in user_message:
-            # 엔진 오일 경고등 관련 응답
-            response = generate_engine_oil_warning_response(entities)
-        elif intent == "car_maintenance":
-            # 일반 자동차 정비 관련 응답
-            response = generate_car_maintenance_response(entities)
-        elif intent == "car_diagnosis":
-            # 자동차 진단 관련 이벤트 생성 및 처리
-            event_id = f"event_{uuid.uuid4().hex[:8]}"
-            await create_diagnostic_event(event_id, client_id, entities)
-            response = "차량 진단을 요청했습니다. 잠시 후 결과를 알려드리겠습니다."
-        else:
-            # 기본 응답
-            response = f"안녕하세요! 자동차 정비 서비스입니다. '{user_message}'에 대한 도움이 필요하시군요. 어떻게 도와드릴까요?"
-        
-        # 응답 저장
-        response_id = f"resp_{uuid.uuid4().hex[:8]}"
-        response_message = {
-            "message_id": response_id,
-            "client_id": client_id,
-            "response": response,  # 'message' 대신 'response' 사용
-            "timestamp": datetime.now().isoformat(),
-            "status": "completed",
-            "role": "assistant"
-        }
-        
-        messages_store[client_id] = response_message
-        conversation_history[client_id].append(response_message)
-        
-        logger.info(f"응답 생성 완료: client_id={client_id}, response_id={response_id}")
-        
-        # 사용자에게 응답 전송
-        await send_response_to_user(client_id, response, "text")
-        
-    except Exception as e:
-        logger.error(f"메시지 처리 중 오류 발생: client_id={client_id}, error={str(e)}")
-        error_response = "죄송합니다. 메시지 처리 중 오류가 발생했습니다."
-        await send_response_to_user(client_id, error_response, "error")
-
-def analyze_message_intent(message: str) -> tuple:
-    """메시지 의도 및 엔티티 분석"""
-    # 간단한 의도 분석 로직 (실제로는 NLP 서비스나 정교한 분류기 사용 필요)
-    intent = "general"
-    entities = {}
-    
-    # 자동차 이슈 패턴
-    car_issue_patterns = [
-        r"경고등", r"불이 켜졌", r"고장", r"소리가 나", r"진동", 
-        r"엔진", r"오작동", r"시동", r"브레이크", r"기름", r"오일"
-    ]
-    
-    # 정비 관련 패턴
-    maintenance_patterns = [
-        r"정비", r"수리", r"점검", r"교체", r"예약", r"정기 점검",
-        r"타이어", r"배터리", r"교환", r"정검", r"서비스", r"as"
-    ]
-    
-    # 진단 관련 패턴
-    diagnosis_patterns = [
-        r"진단", r"검사", r"상태", r"체크", r"확인", r"문제가 뭔지"
-    ]
-    
-    # 차량 유형 추출 시도
-    car_type_patterns = [
-        (r"([가-힣\s\d]+)\s?차량", "car_model"),
-        (r"내 ([가-힣\s\d]+)", "car_model")
-    ]
-    
-    # 자동차 이슈 확인
-    for pattern in car_issue_patterns:
-        if re.search(pattern, message, re.IGNORECASE):
-            intent = "car_issue"
-            # 특정 이슈 식별
-            if "엔진 오일" in message or ("엔진" in message and "오일" in message):
-                entities["issue_type"] = "engine_oil"
-            elif "브레이크" in message:
-                entities["issue_type"] = "brake"
-            elif "타이어" in message:
-                entities["issue_type"] = "tire"
-            elif "배터리" in message:
-                entities["issue_type"] = "battery"
-            else:
-                entities["issue_type"] = "general"
-            break
-    
-    # 정비 관련 확인
-    if intent == "general":  # 이전에 이슈로 식별되지 않은 경우만
-        for pattern in maintenance_patterns:
-            if re.search(pattern, message, re.IGNORECASE):
-                intent = "car_maintenance"
-                break
-    
-    # 진단 관련 확인
-    if intent == "general":  # 이전에 다른 의도로 식별되지 않은 경우만
-        for pattern in diagnosis_patterns:
-            if re.search(pattern, message, re.IGNORECASE):
-                intent = "car_diagnosis"
-                break
-    
-    # 차량 모델 추출 시도
-    for pattern, entity_name in car_type_patterns:
-        match = re.search(pattern, message)
-        if match:
-            entities[entity_name] = match.group(1)
-            break
-    
-    return intent, entities
-
-def generate_engine_oil_warning_response(entities: Dict[str, Any]) -> str:
-    """엔진 오일 경고등 관련 응답 생성"""
-    response = [
-        "엔진 오일 경고등이 켜졌군요. 다음과 같이 조치해 보세요:",
-        "",
-        "1. 안전한 장소에 차를 정차하고 엔진을 끄세요.",
-        "2. 엔진이 식은 후, 오일량을 확인하세요. 오일 게이지를 뽑아 레벨을 확인합니다.",
-        "3. 오일량이 부족하면 적정 수준까지 보충하세요. (차량 매뉴얼에 맞는 오일을 사용하세요.)",
-        "4. 오일량이 정상이라면 오일 품질이나 오일 센서에 문제가 있을 수 있습니다.",
-        "",
-        "가까운 정비소에서 점검받는 것을 권장합니다. 도움이 필요하시면 가까운 정비소를 추천해 드릴까요?"
-    ]
-    
-    return "\n".join(response)
-
-def generate_car_maintenance_response(entities: Dict[str, Any]) -> str:
-    """자동차 정비 관련 응답 생성"""
-    car_model = entities.get("car_model", "귀하의 차량")
-    
-    response = [
-        f"{car_model}의 정비가 필요하시군요.",
-        "",
-        "다음 정비 항목 중 어떤 것이 필요하신가요?",
-        "- 정기점검 (엔진 오일, 필터 교체 등)",
-        "- 타이어 교체/점검",
-        "- 브레이크 점검",
-        "- 에어컨/히터 점검",
-        "- 배터리 점검",
-        "",
-        "또는 정비 예약을 도와드릴까요? 원하시는 날짜와 시간을 알려주세요."
-    ]
-    
-    return "\n".join(response)
-
-async def create_diagnostic_event(event_id: str, client_id: str, entities: Dict[str, Any]):
-    """차량 진단 이벤트 생성 및 전송"""
-    try:
-        event = Event(
-            event_id=event_id,
-            event_type="car_diagnostic",
-            source="supervisor",
-            data={
-                "client_id": client_id,
-                "diagnostic_data": {
-                    "car_model": entities.get("car_model", "unknown"),
-                    "issue_type": entities.get("issue_type", "general"),
-                    "description": f"사용자 요청에 의한 진단: {entities}"
-                }
-            },
-            timestamp=datetime.now().isoformat()
-        )
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.post(SUB_AGENT_URL, json=event.dict())
-            print(f"진단 이벤트 전송 결과: {response.status_code}")
-            
-    except Exception as e:
-        print(f"진단 이벤트 생성 중 오류 발생: {str(e)}")
-
-async def find_appropriate_agent(intent: str) -> Dict[str, Any]:
-    """의도에 적합한 에이전트 찾기"""
-    try:
-        capabilities = []
-        
-        if intent == "car_issue":
-            capabilities = ["car_troubleshooting", "engine_diagnostics"]
-        elif intent == "car_maintenance":
-            capabilities = ["car_maintenance", "service_scheduling"]
-        elif intent == "car_diagnosis":
-            capabilities = ["car_diagnostics", "sensor_analysis"]
-        else:
-            capabilities = ["general_assistance"]
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{AGENT_CARD_REGISTRY_URL}/agents/find",
-                json={"required_capabilities": capabilities}
-            )
-            
-            if response.status_code == 200:
-                agents = response.json()
-                if agents:
-                    return agents[0]  # 가장 첫 번째 매칭된 에이전트 선택
-            
-            # 기본 에이전트 정보
-            return {
-                "id": "mechanic_agent",
-                "name": "정비사 에이전트",
-                "capabilities": ["general_assistance"]
-            }
-                
-    except Exception as e:
-        print(f"에이전트 검색 중 오류 발생: {str(e)}")
-        return {
-            "id": "default_agent",
-            "name": "기본 에이전트",
-            "capabilities": ["general_assistance"]
-        }
-
-async def send_response_to_user(client_id: str, message: str, response_type: str, data: Dict[str, Any] = None):
-    """사용자에게 응답 전송"""
-    try:
-        # 로그 시작
-        logger.info(f"사용자 응답 전송 시작: client_id={client_id}, type={response_type}")
-        
-        response = UserResponse(
-            client_id=client_id,
-            message=message,
-            response_type=response_type,
-            data=data
-        )
-        
-        response_dict = response.dict(exclude_none=True)
-        
-        # 응답 저장
-        if response_type == "text":
-            response_id = f"resp_{uuid.uuid4().hex[:8]}"
-            messages_store[response_id] = {
-                "client_id": client_id,
-                "response": message,
-                "timestamp": datetime.now().isoformat()
-            }
-        
-        # 재시도 로직으로 응답 전송
-        for retry in range(MAX_RETRIES):
-            try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    logger.debug(f"응답 전송 시도 ({retry+1}/{MAX_RETRIES}): client_id={client_id}")
-                    api_response = await client.post(
-                        CHAT_GATEWAY_URL, 
-                        json=response_dict,
-                        timeout=10.0
-                    )
-                    
-                    if api_response.status_code == 200:
-                        logger.info(f"응답 전송 성공: client_id={client_id}")
-                        return
-                    else:
-                        logger.warning(f"응답 전송 실패: client_id={client_id}, status_code={api_response.status_code}")
-                        
-                        # 마지막 시도가 아니면 재시도
-                        if retry < MAX_RETRIES - 1:
-                            logger.info(f"응답 전송 재시도 중 ({retry+1}/{MAX_RETRIES}): client_id={client_id}")
-                            await asyncio.sleep(RETRY_DELAY * (retry + 1))  # 지수 백오프
-                            
-            except Exception as e:
-                logger.error(f"응답 전송 중 오류 발생: client_id={client_id}, error={str(e)}")
-                
-                # 마지막 시도가 아니면 재시도
-                if retry < MAX_RETRIES - 1:
-                    logger.info(f"응답 전송 재시도 중 ({retry+1}/{MAX_RETRIES}): client_id={client_id}")
-                    await asyncio.sleep(RETRY_DELAY * (retry + 1))  # 지수 백오프
-                
-    except Exception as e:
-        logger.error(f"응답 전송 처리 중 오류 발생: client_id={client_id}, error={str(e)}")
+@app.get("/messages/{client_id}")
+async def get_messages(client_id: str):
+    """클라이언트의 메시지 이력 조회"""
+    if client_id in messages_store:
+        return {"client_id": client_id, "messages": messages_store[client_id]}
+    return {"client_id": client_id, "messages": []}
 
 @app.get("/responses/{client_id}")
-async def get_response_by_client_id(client_id: str):
-    """특정 클라이언트의 최신 응답 조회"""
-    try:
-        logger.info(f"클라이언트 응답 조회: client_id={client_id}")
-        
-        # 검색 결과를 저장할 리스트
-        client_responses = []
-        
-        # 1. 직접 client_id를 키로 하는 응답 확인
-        if client_id in messages_store:
-            client_responses.append(messages_store[client_id])
-        
-        # 2. 모든 메시지 중에서 해당 클라이언트의 응답 검색
-        for msg_id, msg in messages_store.items():
-            if msg.get("client_id") == client_id and "response" in msg:
-                client_responses.append(msg)
-        
-        # 3. 대화 기록에서 마지막 응답 찾기
-        if client_id in conversation_history:
-            assistant_messages = [msg for msg in conversation_history[client_id] if msg.get("role") == "assistant"]
-            if assistant_messages:
-                latest_assistant_msg = assistant_messages[-1]
-                # response 형식으로 변환
-                client_responses.append({
-                    "client_id": client_id,
-                    "response": latest_assistant_msg.get("message", latest_assistant_msg.get("response", "")),
-                    "timestamp": latest_assistant_msg.get("timestamp", datetime.now().isoformat())
-                })
-        
-        # 최신 응답 선택
-        if client_responses:
-            # 타임스탬프로 정렬 (최신 순)
-            sorted_responses = sorted(
-                client_responses, 
-                key=lambda x: x.get("timestamp", ""), 
-                reverse=True
-            )
-            latest_response = sorted_responses[0]
-            
-            # 응답이 없는지 확인
-            if "response" not in latest_response and "message" in latest_response:
-                latest_response["response"] = latest_response["message"]
-                
-            return latest_response
-        
-        # 응답이 없는 경우
-        logger.warning(f"해당 클라이언트의 응답을 찾을 수 없음: client_id={client_id}")
-        return {}
-    
-    except Exception as e:
-        logger.error(f"응답 조회 중 오류 발생: client_id={client_id}, error={str(e)}")
-        raise HTTPException(status_code=500, detail=f"응답 조회 중 오류 발생: {str(e)}")
+async def get_response(client_id: str):
+    """클라이언트의 응답 조회"""
+    if client_id in responses_store:
+        return {"client_id": client_id, "response": responses_store[client_id]}
+    return {"client_id": client_id, "response": ""}
 
-async def register_service():
-    """서비스 레지스트리에 등록"""
-    service_data = {
-        "name": "supervisor",
-        "url": "http://supervisor:8003",
-        "health_check_url": "http://supervisor:8003/health",
-        "metadata": {
-            "description": "수퍼바이저 서비스",
-            "version": "1.0.0"
-        }
-    }
-    
+async def process_and_respond(client_id: str, user_message: str, context: Dict[str, Any] = {}):
+    """메시지 처리 및 응답 생성 (비동기)"""
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(SERVICE_REGISTRY_URL, json=service_data)
-            if response.status_code == 200:
-                logger.info("서비스 레지스트리 등록 성공")
-            else:
-                logger.error(f"서비스 레지스트리 등록 실패: {response.status_code} - {response.text}")
+        # LangGraph 에이전트 실행
+        messages = [HumanMessage(content=user_message)]
+        
+        # 이전 대화 이력이 있으면 추가
+        if client_id in messages_store and len(messages_store[client_id]) > 1:
+            for prev_msg in messages_store[client_id][:-1]:  # 마지막 메시지 제외
+                if prev_msg.get("role") == "user":
+                    messages.append(HumanMessage(content=prev_msg.get("message", "")))
+                elif prev_msg.get("role") == "assistant":
+                    messages.append(AIMessage(content=prev_msg.get("response", "")))
+        
+        # 에이전트 워크플로우 실행
+        result = await agent_workflow.ainvoke({"messages": messages, "next": None})
+        final_messages = result["messages"]
+        
+        # 마지막 AI 메시지 추출
+        response_message = ""
+        for msg in reversed(final_messages):
+            if isinstance(msg, AIMessage):
+                response_message = msg.content
+                break
+        
+        if not response_message:
+            response_message = "죄송합니다. 현재 응답을 생성할 수 없습니다."
+        
+        # 응답 저장
+        responses_store[client_id] = response_message
+        
+        # 응답을 채팅 게이트웨이에도 전송
+        try:
+            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+                response_data = {
+                    "client_id": client_id,
+                    "response": response_message,
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+                await client.post(CHAT_GATEWAY_URL, json=response_data)
+        except Exception as e:
+            logger.error(f"채팅 게이트웨이 응답 전송 오류: {str(e)}")
+        
+        logger.info(f"클라이언트 {client_id}에 대한 응답 생성 완료")
+        
     except Exception as e:
-        logger.error(f"서비스 레지스트리 등록 중 오류 발생: {str(e)}")
+        logger.error(f"응답 생성 중 오류 발생: {str(e)}")
+        # 오류 발생 시 기본 응답
+        error_response = "죄송합니다. 요청을 처리하는 중에 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
+        responses_store[client_id] = error_response
+        
+        try:
+            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+                error_data = {
+                    "client_id": client_id,
+                    "response": error_response,
+                    "timestamp": datetime.now().isoformat(),
+                    "error": str(e)
+                }
+                
+                await client.post(CHAT_GATEWAY_URL, json=error_data)
+        except Exception as nested_e:
+            logger.error(f"오류 응답 전송 중 추가 오류: {str(nested_e)}")
 
 @app.on_event("startup")
 async def startup_event():
     """애플리케이션 시작 시 이벤트"""
-    # 서비스 레지스트리 등록
+    # 서비스 등록
     try:
-        await register_service()
+        service_data = {
+            "name": "supervisor",
+            "url": f"http://supervisor:8003",
+            "health_check_url": f"http://supervisor:8003/health",
+            "metadata": {
+                "version": "1.1.0",
+                "description": "A2A MCP Agent System의 수퍼바이저 서비스"
+            }
+        }
+        
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            response = await client.post(
+                f"{SERVICE_REGISTRY_URL}",
+                json=service_data
+            )
+            
+            if response.status_code == 200:
+                logger.info("Supervisor가 서비스 레지스트리에 등록되었습니다.")
+            else:
+                logger.error(f"서비스 레지스트리 등록 실패: {response.status_code}")
     except Exception as e:
-        logger.error(f"시작 이벤트 중 오류 발생: {str(e)}")
+        logger.error(f"서비스 레지스트리 연결 오류: {str(e)}")
 
 @app.on_event("shutdown")
 async def shutdown_event():

@@ -292,8 +292,15 @@ services:
       - ./services/llm_registry:/app
     environment:
       - SERVICE_REGISTRY_URL=http://service-registry:8007/services
-      - MAX_RETRIES=3
-      - RETRY_DELAY=1.0
+      - MAX_RETRIES=5
+      - RETRY_DELAY=2.0
+      - REQUEST_TIMEOUT=30.0
+      - PYTHONUNBUFFERED=1
+      # Azure OpenAI 설정 (실제 배포 시 .env 파일 또는 비밀 관리 도구로 대체)
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-https://your-resource-name.openai.azure.com/}
+      - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION:-2023-05-15}
+      - AZURE_OPENAI_DEPLOYMENT_NAME=${AZURE_OPENAI_DEPLOYMENT_NAME:-}
     depends_on:
       - service-registry
     healthcheck:

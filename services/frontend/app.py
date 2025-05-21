@@ -8,9 +8,13 @@ import datetime
 import uuid
 import asyncio
 from typing import Dict, Any, List
+from dotenv import load_dotenv
 
 from chainlit.logger import logger
 from chainlit.input_widget import TextInput
+
+# 환경 변수 로드
+load_dotenv()
 
 # 환경 변수 설정
 API_GATEWAY_URL = os.environ.get("API_GATEWAY_URL", "http://api-gateway:8000")
@@ -19,21 +23,29 @@ SUPERVISOR_URL = os.environ.get("SUPERVISOR_URL", "http://supervisor:8003")
 TOOL_REGISTRY_URL = os.environ.get("TOOL_REGISTRY_URL", "http://tool-registry:8005")
 EVENT_GATEWAY_URL = os.environ.get("EVENT_GATEWAY_URL", "http://event-gateway:8001")
 MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://mcp-server:8004")
+LLM_REGISTRY_URL = os.environ.get("LLM_REGISTRY_URL", "http://llm-registry:8101")
 
 # 필수 환경 변수 검사
 if not API_GATEWAY_URL:
     logger.error("API_GATEWAY_URL 환경 변수가 설정되지 않았습니다.")
     raise ValueError("API_GATEWAY_URL 환경 변수가 설정되지 않았습니다.")
 
+# Azure OpenAI 환경 변수 확인
+AZURE_OPENAI_API_KEY = os.environ.get("AZURE_OPENAI_API_KEY", "")
+if not AZURE_OPENAI_API_KEY:
+    logger.warning("AZURE_OPENAI_API_KEY 환경 변수가 설정되지 않았습니다.")
+
 # 통신 재시도 설정
-MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "3"))
-RETRY_DELAY = float(os.environ.get("RETRY_DELAY", "1.0"))
+MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "5"))
+RETRY_DELAY = float(os.environ.get("RETRY_DELAY", "2.0"))
+REQUEST_TIMEOUT = float(os.environ.get("REQUEST_TIMEOUT", "30.0"))
 
 # 서비스 상태 저장용 전역 변수
 service_status = {}
 available_tools = {}
 available_agents = {}
 available_capabilities = {}
+available_llm_services = {}
 
 # 사용자 대화 이력 저장
 chat_history = {}
@@ -56,7 +68,8 @@ async def start():
     buttons = [
         cl.Action(name="show_dashboard", label="대시보드", payload={"type": "navigation"}),
         cl.Action(name="show_tools", label="도구 목록", payload={"type": "navigation"}),
-        cl.Action(name="show_agents", label="에이전트 목록", payload={"type": "navigation"})
+        cl.Action(name="show_agents", label="에이전트 목록", payload={"type": "navigation"}),
+        cl.Action(name="show_llm_services", label="LLM 서비스 설정", payload={"type": "navigation"})
     ]
     
     export_actions = [
@@ -102,7 +115,7 @@ async def load_system_data():
         # API 게이트웨이를 통해 대시보드 데이터 로드
         for retry in range(MAX_RETRIES):
             try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
+                async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
                     response = await client.get(f"{API_GATEWAY_URL}/ui/dashboard")
                     
                     if response.status_code == 200:
@@ -119,6 +132,9 @@ async def load_system_data():
                             service.get("name", "unknown"): service.get("status", "unknown") == "healthy"
                             for service in dashboard_data.get("active_services", [])
                         }
+                        
+                        # LLM 서비스 목록 가져오기
+                        await load_llm_services()
                         
                         return True
                     else:
@@ -139,6 +155,26 @@ async def load_system_data():
                 return False
     except Exception as e:
         logger.error(f"데이터 로드 오류: {str(e)}")
+        return False
+
+async def load_llm_services():
+    """LLM 서비스 목록 로드"""
+    try:
+        global available_llm_services
+        
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            response = await client.get(f"{API_GATEWAY_URL}/ui/llm/services")
+            
+            if response.status_code == 200:
+                services = response.json()
+                available_llm_services = services
+                logger.info(f"LLM 서비스 로드 완료: {len(services)}개 서비스 사용 가능")
+                return True
+            else:
+                logger.error(f"LLM 서비스 로드 실패: HTTP {response.status_code}")
+                return False
+    except Exception as e:
+        logger.error(f"LLM 서비스 로드 오류: {str(e)}")
         return False
 
 @cl.on_message
@@ -259,254 +295,116 @@ async def process_uploaded_file(file: cl.File, processing_msg: cl.Message):
         logger.error(f"파일 처리 중 오류가 발생했습니다: {str(e)}")
         await processing_msg.update(content=f"파일 처리 중 오류가 발생했습니다: {str(e)}")
 
-@cl.action_callback("show_diagnostic_stats")
-async def show_diagnostic_stats_callback(_):
-    await show_diagnostic_stats()
+@cl.action_callback("show_dashboard")
+async def dashboard_callback(_):
+    """대시보드 페이지로 이동"""
+    await handle_command("/대시보드", cl.Message(content="대시보드로 이동 중...", author="시스템"))
 
-async def show_diagnostic_stats():
-    """차량 진단 통계 보기"""
+@cl.action_callback("show_tools")
+async def tools_callback(_):
+    """도구 목록 페이지로 이동"""
+    await handle_command("/도구", cl.Message(content="도구 목록을 불러오는 중...", author="시스템"))
+
+@cl.action_callback("show_agents")
+async def agents_callback(_):
+    """에이전트 목록 페이지로 이동"""
+    await handle_command("/에이전트", cl.Message(content="에이전트 목록을 불러오는 중...", author="시스템"))
+
+@cl.action_callback("show_llm_services")
+async def show_llm_services_callback(_):
+    """LLM 서비스 설정 페이지"""
+    await show_llm_services()
+
+async def show_llm_services():
+    """LLM 서비스 목록 및 설정 표시"""
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(f"{API_GATEWAY_URL}/ui/diagnostic-stats")
+        # LLM 서비스 데이터 로드
+        await load_llm_services()
+        
+        if not available_llm_services:
+            await cl.Message(content="사용 가능한 LLM 서비스가 없습니다.", author="시스템").send()
+            return
+        
+        content = "## LLM 서비스 설정\n\n"
+        content += "현재 사용 가능한 LLM 서비스 목록입니다. 대화에 사용할 서비스를 선택하세요.\n\n"
+        
+        service_actions = []
+        
+        for service in available_llm_services:
+            service_id = service.get("service_id", "unknown")
+            service_name = service.get("name", "Unknown Service")
+            provider = service.get("provider", "Unknown Provider")
+            model = service.get("model", "Unknown Model")
             
-            if response.status_code == 200:
-                stats = response.json()
-                
-                # 통계 데이터 표시
-                content = "## 차량 진단 통계\n\n"
-                content += f"- **총 진단 건수**: {stats.get('total_diagnostics', 0)}\n\n"
-                
-                # 이슈 유형 분포
-                content += "### 이슈 유형 분포\n\n"
-                issue_types = stats.get("issue_types", {})
-                for issue_type, count in issue_types.items():
-                    content += f"- {issue_type}: {count}건\n"
-                
-                # 심각도 분포
-                content += "\n### 심각도 분포\n\n"
-                severity = stats.get("severity_distribution", {})
-                for level, count in severity.items():
-                    content += f"- {level}: {count}건\n"
-                
-                # 주간 추세
-                content += "\n### 주간 추세\n"
-                content += "최근 7일간 진단 건수: "
-                trend = stats.get("weekly_trend", [])
-                for i, count in enumerate(trend):
-                    day = (datetime.datetime.now() - datetime.timedelta(days=6-i)).strftime("%m/%d")
-                    content += f"{day}: {count}건 "
-                
-                # Plotly 요소 생성
-                try:
-                    import plotly.graph_objects as go
-                    
-                    # 파이 차트 생성
-                    fig = go.Figure(
-                        data=[
-                            go.Pie(
-                                values=list(stats.get("issue_types", {}).values()),
-                                labels=list(stats.get("issue_types", {}).keys()),
-                                hole=0.3
-                            )
-                        ]
-                    )
-                    fig.update_layout(title_text="이슈 유형 분포")
-                    
-                    elements = [cl.Plotly(name="issue_types_chart", figure=fig)]
-                    await cl.Message(content=content, author="시스템", elements=elements).send()
-                except Exception as e:
-                    logger.error(f"Plotly 차트 생성 중 오류: {str(e)}")
-                    # Plotly 오류 시 텍스트만 표시
-                    await cl.Message(content=content, author="시스템").send()
-            else:
-                await cl.Message(content="통계 데이터를 불러올 수 없습니다.", author="시스템").send()
-                
+            # 서비스 선택 액션 추가
+            service_actions.append(
+                cl.Action(
+                    name=f"select_llm_{service_id}",
+                    label=f"사용: {service_name}",
+                    payload={"service_id": service_id}
+                )
+            )
+            
+            content += f"### {service_name}\n"
+            content += f"- **제공자**: {provider}\n"
+            content += f"- **모델**: {model}\n"
+            content += f"- **서비스 ID**: `{service_id}`\n"
+            
+            # 기능 목록 표시
+            features = service.get("features", [])
+            if features:
+                content += "- **지원 기능**: "
+                content += ", ".join(features)
+                content += "\n"
+            
+            content += "\n"
+        
+        # API 키 설정 확인
+        api_key_status = "설정됨 ✅" if AZURE_OPENAI_API_KEY else "설정되지 않음 ❌"
+        content += f"### API 키 상태\n"
+        content += f"- **Azure OpenAI API 키**: {api_key_status}\n\n"
+        content += "API 키가 설정되지 않은 경우, 서버의 .env 파일에 추가해야 합니다.\n"
+        
+        # 서비스 선택 메시지 표시
+        await cl.Message(
+            content=content,
+            author="시스템",
+            actions=service_actions
+        ).send()
+        
     except Exception as e:
-        logger.error(f"통계 조회 중 오류 발생: {str(e)}")
-        await cl.Message(content=f"통계 조회 중 오류 발생: {str(e)}", author="시스템").send()
+        logger.error(f"LLM 서비스 조회 중 오류 발생: {str(e)}")
+        await cl.Message(content=f"LLM 서비스 조회 중 오류 발생: {str(e)}", author="시스템").send()
 
-@cl.action_callback("show_mechanic_stats")
-async def show_mechanic_stats_callback(_):
-    await show_mechanic_stats()
-
-async def show_mechanic_stats():
-    """정비사 통계 보기"""
+@cl.action_callback("select_llm")
+async def select_llm_callback(action: cl.Action):
+    """LLM 서비스 선택 처리"""
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(f"{API_GATEWAY_URL}/ui/mechanic-stats")
-            
-            if response.status_code == 200:
-                stats = response.json()
-                
-                # 통계 데이터 표시
-                content = "## 정비사 에이전트 통계\n\n"
-                content += f"- **활성 정비사**: {stats.get('active_mechanics', 0)}\n"
-                content += f"- **총 예약 건수**: {stats.get('total_appointments', 0)}\n"
-                content += f"- **서비스 평점**: ⭐ {stats.get('service_ratings', 0)}\n\n"
-                
-                # 서비스 지역
-                content += "### 서비스 지역\n"
-                areas = stats.get("service_areas", [])
-                content += ", ".join(areas)
-                
-                # 전문 분야 분포
-                content += "\n\n### 전문 분야 분포\n\n"
-                specialties = stats.get("specialty_distribution", {})
-                for specialty, count in specialties.items():
-                    content += f"- {specialty}: {count}명\n"
-                
-                # Plotly 차트 생성
-                try:
-                    import plotly.graph_objects as go
-                    
-                    # 바 차트 생성
-                    fig = go.Figure(
-                        data=[
-                            go.Bar(
-                                x=list(stats.get("specialty_distribution", {}).keys()),
-                                y=list(stats.get("specialty_distribution", {}).values()),
-                                marker_color=['rgba(76, 175, 80, 0.6)', 'rgba(33, 150, 243, 0.6)', 
-                                             'rgba(156, 39, 176, 0.6)', 'rgba(255, 152, 0, 0.6)']
-                            )
-                        ]
-                    )
-                    fig.update_layout(title_text="전문 분야 분포")
-                    
-                    elements = [cl.Plotly(name="specialty_chart", figure=fig)]
-                    await cl.Message(content=content, author="시스템", elements=elements).send()
-                except Exception as e:
-                    logger.error(f"Plotly 차트 생성 중 오류: {str(e)}")
-                    # Plotly 오류 시 텍스트만 표시
-                    await cl.Message(content=content, author="시스템").send()
-            else:
-                await cl.Message(content="통계 데이터를 불러올 수 없습니다.", author="시스템").send()
-                
+        service_id = action.payload.get("service_id")
+        if not service_id:
+            await cl.Message(content="서비스 ID가 제공되지 않았습니다.", author="시스템").send()
+            return
+        
+        # 선택한 서비스 정보 찾기
+        selected_service = next((s for s in available_llm_services if s.get("service_id") == service_id), None)
+        if not selected_service:
+            await cl.Message(content=f"서비스 ID '{service_id}'를 찾을 수 없습니다.", author="시스템").send()
+            return
+        
+        # 세션에 선택한 서비스 저장
+        cl.user_session.set("selected_llm_service", selected_service)
+        
+        service_name = selected_service.get("name", "Unknown Service")
+        model = selected_service.get("model", "Unknown Model")
+        
+        await cl.Message(
+            content=f"**{service_name}** ({model})을(를) 대화에 사용합니다.",
+            author="시스템"
+        ).send()
+        
     except Exception as e:
-        logger.error(f"통계 조회 중 오류 발생: {str(e)}")
-        await cl.Message(content=f"통계 조회 중 오류 발생: {str(e)}", author="시스템").send()
-
-@cl.action_callback("show_tool_usage_stats")
-async def show_tool_usage_stats_callback(_):
-    await show_tool_usage_stats()
-
-async def show_tool_usage_stats():
-    """도구 사용 통계 보기"""
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(f"{API_GATEWAY_URL}/ui/tool-usage")
-            
-            if response.status_code == 200:
-                stats = response.json()
-                
-                # 통계 데이터 표시
-                content = "## 도구 사용 통계\n\n"
-                
-                # 가장 많이 사용된 도구
-                content += "### 가장 많이 사용된 도구\n\n"
-                most_used = stats.get("most_used_tools", [])
-                for tool in most_used:
-                    content += f"- {tool.get('name')}: {tool.get('count')}회\n"
-                
-                # 성공률
-                content += "\n### 도구별 성공률\n\n"
-                success_rates = stats.get("success_rate", {})
-                for tool, rate in success_rates.items():
-                    percentage = int(rate * 100)
-                    content += f"- {tool}: {percentage}%\n"
-                
-                # 평균 응답 시간
-                content += "\n### 평균 응답 시간 (초)\n\n"
-                response_times = stats.get("average_response_time", {})
-                for tool, time in response_times.items():
-                    content += f"- {tool}: {time}초\n"
-                
-                # Plotly 차트 생성
-                try:
-                    import plotly.graph_objects as go
-                    
-                    tools = [tool.get('name') for tool in stats.get("most_used_tools", [])]
-                    counts = [tool.get('count') for tool in stats.get("most_used_tools", [])]
-                    
-                    # 바 차트 생성
-                    fig = go.Figure(
-                        data=[
-                            go.Bar(
-                                x=tools,
-                                y=counts,
-                                marker_color='rgba(0, 128, 255, 0.6)'
-                            )
-                        ]
-                    )
-                    fig.update_layout(title_text="도구 사용 빈도")
-                    
-                    elements = [cl.Plotly(name="tool_usage_chart", figure=fig)]
-                    await cl.Message(content=content, author="시스템", elements=elements).send()
-                except Exception as e:
-                    logger.error(f"Plotly 차트 생성 중 오류: {str(e)}")
-                    # Plotly 오류 시 텍스트만 표시
-                    await cl.Message(content=content, author="시스템").send()
-            else:
-                await cl.Message(content="통계 데이터를 불러올 수 없습니다.", author="시스템").send()
-                
-    except Exception as e:
-        logger.error(f"통계 조회 중 오류 발생: {str(e)}")
-        await cl.Message(content=f"통계 조회 중 오류 발생: {str(e)}", author="시스템").send()
-
-async def check_system_status() -> Dict[str, bool]:
-    """모든 마이크로서비스의 상태 확인"""
-    services = {
-        "API Gateway": {"url": f"{API_GATEWAY_URL}/health", "healthy": False, "details": "연결 시도 전"},
-        "Chat Gateway": {"url": f"{CHAT_GATEWAY_URL}/health", "healthy": False, "details": "연결 시도 전"},
-        "Supervisor": {"url": f"{SUPERVISOR_URL}/health", "healthy": False, "details": "연결 시도 전"},
-        "MCP Server": {"url": f"{MCP_SERVER_URL}/health", "healthy": False, "details": "연결 시도 전"},
-        "Tool Registry": {"url": f"{TOOL_REGISTRY_URL}/health", "healthy": False, "details": "연결 시도 전"},
-        "Event Gateway": {"url": f"{EVENT_GATEWAY_URL}/health", "healthy": False, "details": "연결 시도 전"}
-    }
-    
-    async with httpx.AsyncClient(timeout=3.0) as client:
-        for service_name, service_info in services.items():
-            for retry in range(MAX_RETRIES):
-                try:
-                    response = await client.get(service_info["url"])
-                    if response.status_code == 200:
-                        services[service_name]["healthy"] = True
-                        services[service_name]["details"] = "상태 정상"
-                        services[service_name]["status_code"] = response.status_code
-                        # 응답 데이터 추가
-                        try:
-                            services[service_name]["response"] = response.json()
-                        except:
-                            services[service_name]["response"] = "응답 데이터 없음"
-                        break
-                    else:
-                        services[service_name]["healthy"] = False
-                        services[service_name]["details"] = f"오류 상태 코드: {response.status_code}"
-                        services[service_name]["status_code"] = response.status_code
-                        if retry < MAX_RETRIES - 1:
-                            await asyncio.sleep(RETRY_DELAY)
-                except httpx.RequestError as e:
-                    services[service_name]["healthy"] = False
-                    services[service_name]["details"] = f"연결 오류: {str(e)}"
-                    if retry < MAX_RETRIES - 1:
-                        await asyncio.sleep(RETRY_DELAY)
-    
-    return {name: info for name, info in services.items()}
-
-async def get_available_tools() -> List[Dict[str, Any]]:
-    """도구 레지스트리에서 사용 가능한 도구 목록 가져오기"""
-    try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            response = await client.get(f"{API_GATEWAY_URL}/ui/tools")
-            
-            if response.status_code == 200:
-                tools = response.json()
-                global available_tools
-                available_tools = tools
-                return tools
-            return []
-    except Exception as e:
-        logger.error(f"도구 목록 가져오기 중 오류 발생: {str(e)}")
-        return []
+        logger.error(f"LLM 서비스 선택 중 오류 발생: {str(e)}")
+        await cl.Message(content=f"LLM 서비스 선택 중 오류 발생: {str(e)}", author="시스템").send()
 
 async def handle_command(command: str, processing_msg: cl.Message):
     """특별 명령어 처리"""
@@ -602,7 +500,8 @@ async def handle_command(command: str, processing_msg: cl.Message):
         actions = [
             cl.Action(name="show_diagnostic_stats", label="차량 진단 통계 보기", payload={"stats_type": "diagnostic"}),
             cl.Action(name="show_mechanic_stats", label="정비사 통계 보기", payload={"stats_type": "mechanic"}),
-            cl.Action(name="show_tool_usage_stats", label="도구 사용 통계 보기", payload={"stats_type": "tool_usage"})
+            cl.Action(name="show_tool_usage_stats", label="도구 사용 통계 보기", payload={"stats_type": "tool_usage"}),
+            cl.Action(name="show_llm_services", label="LLM 서비스 설정", payload={"type": "navigation"})
         ]
         
         await cl.Message(
@@ -928,7 +827,7 @@ async def send_to_chat_gateway(message_content: str, processing_msg: cl.Message)
         response_data = None
         for retry in range(MAX_RETRIES):
             try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
+                async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
                     # 메시지 전송
                     response = await client.post(f"{API_GATEWAY_URL}/chat/messages", json=payload)
                     
@@ -958,7 +857,7 @@ async def send_to_chat_gateway(message_content: str, processing_msg: cl.Message)
         empty_response_count = 0  # 연속된 빈 응답 횟수
         for poll in range(max_polls):
             try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
+                async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
                     supervisor_response = await client.get(f"{API_GATEWAY_URL}/supervisor/responses/{client_id}")
                     
                     if supervisor_response.status_code == 200:
@@ -1002,7 +901,8 @@ async def send_to_chat_gateway(message_content: str, processing_msg: cl.Message)
                         # 응답을 기다리고 있다는 메시지 업데이트
                         if poll > 2:  # 처음 몇 번의 폴링은 조용히 진행
                             dots = "." * ((poll % 3) + 1)
-                            await processing_msg.update(content=f"응답을 생성하고 있습니다{dots}")
+                            await processing_msg.remove()
+                            processing_msg = await cl.Message(content=f"응답을 생성하고 있습니다{dots}", author="시스템").send()
                         await asyncio.sleep(poll_interval)
                     else:
                         # 최대 폴링 횟수에 도달
@@ -1043,33 +943,6 @@ async def send_to_chat_gateway(message_content: str, processing_msg: cl.Message)
         logger.error(f"메시지 처리 중 오류가 발생했습니다: {str(e)}")
         await processing_msg.remove()
         await cl.Message(content=f"메시지 처리 중 오류가 발생했습니다: {str(e)}", author="시스템").send()
-
-@cl.action_callback("show_dashboard")
-async def dashboard_callback(_):
-    """대시보드 페이지로 이동"""
-    await handle_command("/대시보드", cl.Message(content="대시보드로 이동 중...", author="시스템"))
-
-@cl.action_callback("show_tools")
-async def tools_callback(_):
-    """도구 목록 페이지로 이동"""
-    await handle_command("/도구", cl.Message(content="도구 목록을 불러오는 중...", author="시스템"))
-
-@cl.action_callback("show_agents")
-async def agents_callback(_):
-    """에이전트 목록 페이지로 이동"""
-    await handle_command("/에이전트", cl.Message(content="에이전트 목록을 불러오는 중...", author="시스템"))
-
-@cl.action_callback("template")
-async def template_callback(action: cl.Action):
-    """템플릿 메시지 선택 처리"""
-    template_name = action.name.replace("template_", "").replace("_", " ")
-    
-    # 선택된 템플릿 메시지로 채팅 메시지 생성
-    processing_msg = cl.Message(content="메시지를 처리 중입니다...", author="시스템")
-    await processing_msg.send()
-    
-    # 템플릿 메시지를 채팅 게이트웨이로 전송
-    await send_to_chat_gateway(template_name, processing_msg)
 
 @cl.action_callback("check_scenario1")
 async def check_scenario1_callback(action):

@@ -43,6 +43,31 @@ RUN echo '{\
   }\
 }' > /app/.chainlit/translations/ko.json
 
+# 예제 .env 파일 생성 (실제 배포 시 볼륨 마운트로 대체)
+RUN echo "# Azure OpenAI 설정\n\
+AZURE_OPENAI_API_KEY=\n\
+AZURE_OPENAI_ENDPOINT=https://your-resource-name.openai.azure.com/\n\
+AZURE_OPENAI_API_VERSION=2023-05-15\n\
+AZURE_OPENAI_DEPLOYMENT_NAME=\n\
+AZURE_OPENAI_MODEL=gpt-4-turbo\n\
+\n\
+# 기본 LLM 설정\n\
+DEFAULT_LLM_SERVICE=azure-openai\n\
+DEFAULT_LLM_MODEL=gpt-4-turbo\n\
+\n\
+# LLM 응답 설정\n\
+LLM_TEMPERATURE=0.7\n\
+LLM_MAX_TOKENS=1000\n\
+\n\
+# 시스템 설정\n\
+MAX_RETRIES=5\n\
+RETRY_DELAY=2.0\n\
+REQUEST_TIMEOUT=30.0\n\
+PYTHONUNBUFFERED=1" > /app/.env.example
+
+# 환경 변수 설정
+ENV PYTHONUNBUFFERED=1
+
 EXPOSE 8000
 
 CMD ["chainlit", "run", "app.py", "--host", "0.0.0.0", "--port", "8000"] 
