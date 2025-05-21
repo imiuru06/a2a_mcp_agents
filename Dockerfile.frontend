@@ -1,0 +1,48 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY services/frontend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY services/frontend/ .
+
+# 한국어 번역 파일 추가
+RUN mkdir -p /app/.chainlit/translations
+RUN echo '{\
+  "default": {\
+    "header": {\
+      "notConversationPage": "자동차 정비 도우미",\
+      "conversationPage": "자동차 정비 도우미"\
+    },\
+    "actions": {\
+      "clear": "대화 초기화",\
+      "settings": "설정",\
+      "moreInfo": "더 많은 정보",\
+      "lessInfo": "적은 정보",\
+      "clearChat": "대화를 초기화하시겠습니까?",\
+      "upload": "업로드",\
+      "cancel": "취소",\
+      "confirm": "확인"\
+    },\
+    "inputs": {\
+      "placeholder": "메시지 입력..."\
+    },\
+    "output": {\
+      "clear": "대화 초기화",\
+      "copy": "복사",\
+      "copied": "복사됨",\
+      "loading": "로딩 중...",\
+      "thinking": "생각 중..."\
+    }\
+  }\
+}' > /app/.chainlit/translations/ko.json
+
+EXPOSE 8000
+
+CMD ["chainlit", "run", "app.py", "--host", "0.0.0.0", "--port", "8000"] 

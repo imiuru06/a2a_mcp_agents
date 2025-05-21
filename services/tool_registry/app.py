@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 도구 레지스트리 서비스 - 도구 메타데이터 및 이미지 관리
+에이전트가 활용할 수 있는 다양한 자동차 정비 관련 도구 제공
 """
 
 from typing import Dict, List, Optional, Any
@@ -11,8 +12,8 @@ from pydantic import BaseModel
 # FastAPI 앱 생성
 app = FastAPI(
     title="도구 레지스트리 서비스",
-    description="도구 메타데이터 및 이미지 관리",
-    version="1.0.0"
+    description="에이전트가 활용할 수 있는 다양한 도구 메타데이터 및 이미지 관리",
+    version="1.1.0"
 )
 
 # CORS 설정
@@ -65,6 +66,110 @@ tools_registry: Dict[str, Dict[str, Any]] = {
                 "next_available_slot": {"type": "string"},
                 "estimated_duration": {"type": "string"},
                 "estimated_cost": {"type": "string"}
+            }
+        }
+    },
+    "mechanic_finder_tool": {
+        "tool_id": "mechanic_finder_tool",
+        "tool_type": "mechanic_finder",
+        "name": "정비사 찾기 도구",
+        "description": "사용자 위치 기반으로 근처 정비소와 정비사를 찾는 도구",
+        "version": "1.0.0",
+        "parameters": {
+            "location": {
+                "type": "object",
+                "description": "사용자의 현재 위치 정보",
+                "properties": {
+                    "latitude": {"type": "number"},
+                    "longitude": {"type": "number"}
+                }
+            },
+            "problem_type": {
+                "type": "string",
+                "description": "차량 문제 유형 (예: '엔진', '브레이크', '오일')"
+            }
+        },
+        "output_schema": {
+            "type": "object",
+            "properties": {
+                "mechanics": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "distance": {"type": "string"},
+                            "specialty": {"type": "string"},
+                            "contact": {"type": "string"}
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "part_inventory_tool": {
+        "tool_id": "part_inventory_tool",
+        "tool_type": "part_inventory",
+        "name": "부품 재고 관리 도구",
+        "description": "자동차 부품의 재고를 확인하고 주문하는 도구",
+        "version": "1.0.0",
+        "parameters": {
+            "part": {
+                "type": "object",
+                "description": "부품 정보",
+                "properties": {
+                    "name": {"type": "string"},
+                    "part_number": {"type": "string"},
+                    "vehicle_model": {"type": "string"}
+                }
+            },
+            "vehicle_model": {
+                "type": "string",
+                "description": "차량 모델 정보"
+            }
+        },
+        "output_schema": {
+            "type": "object",
+            "properties": {
+                "parts": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "available": {"type": "boolean"},
+                            "price": {"type": "string"},
+                            "estimated_arrival": {"type": "string"}
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "vehicle_manual_tool": {
+        "tool_id": "vehicle_manual_tool",
+        "tool_type": "vehicle_manual",
+        "name": "차량 매뉴얼 도구",
+        "description": "차량 매뉴얼 및 정비 가이드를 검색하고 제공하는 도구",
+        "version": "1.0.0",
+        "parameters": {
+            "query": {
+                "type": "string",
+                "description": "사용자의 검색 쿼리"
+            },
+            "vehicle_model": {
+                "type": "string",
+                "description": "차량 모델 정보"
+            }
+        },
+        "output_schema": {
+            "type": "object",
+            "properties": {
+                "manual_sections": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                },
+                "content": {"type": "string"}
             }
         }
     }

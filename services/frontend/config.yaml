@@ -1,0 +1,54 @@
+chainlit_version: 1.0.0
+
+# 기본 UI 설정
+ui:
+  name: "자동차 정비 어시스턴트"
+  description: "A2A MCP 기반의 자동차 정비 상담 서비스입니다"
+  hide_cot: true
+  theme:
+    primary_color: "#2563EB"
+    secondary_color: "#1D4ED8"
+    neutral_color: "#64748B"
+    font_family: "Roboto, Pretendard, sans-serif"
+  markdown_shortcuts: true
+  enable_dark_mode: true
+  default_dark_mode: false
+  show_readme_as_home: true
+  header_logo_src: "https://raw.githubusercontent.com/Chainlit/chainlit/main/chainlit/frontend/public/logo.png"
+
+# 기능 설정
+features:
+  file_upload: 
+    enabled: true
+    max_size_mb: 20
+    accept:
+      - ".jpg"
+      - ".jpeg"
+      - ".png"
+      - ".pdf"
+      - ".doc"
+      - ".docx"
+    max_files: 5
+  
+  # 대화 이력 관리
+  chat_history:
+    enabled: true
+
+  # 인증 설정 (비활성화)
+  auth:
+    enabled: false
+
+# 코드 강조 설정
+code:
+  theme: "github-dark"
+  max_lines: 50
+  focus_on_load: true
+
+# 메시지 설정
+message:
+  default_user_image: "https://api.dicebear.com/7.x/thumbs/svg?seed=user"
+  default_assistant_image: "https://api.dicebear.com/7.x/thumbs/svg?seed=assistant"  
+
+# 페이지 스크롤 설정
+page:
+  scroll_behavior: "auto" 

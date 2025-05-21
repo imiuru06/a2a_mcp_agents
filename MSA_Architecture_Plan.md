@@ -141,38 +141,6 @@
 3. **Sub-Agent** 또는 **Supervisor**가 응답 생성
 4. **Chat Gateway**를 통해 사용자에게 응답 전송
 
-## 구현 계획 및 단계별 접근법
-
-### 1단계: 핵심 인프라 설정
-- Kubernetes 클러스터 설정
-- 서비스 메시 (Istio) 구성
-- CI/CD 파이프라인 구축
-- 모니터링 및 로깅 인프라 설정
-
-### 2단계: 핵심 서비스 구현
-- MCP Server 마이크로서비스 개발
-- Tool Registry 마이크로서비스 개발
-- 베이스 Sub-Agent 프레임워크 개발
-- Event Gateway 및 Chat Gateway 기본 구현
-
-### 3단계: 도메인별 Sub-Agent 구현
-- ShopManagerAgent 마이크로서비스화
-- MechanicAgent 마이크로서비스화
-- PartsSupplierAgent 마이크로서비스화
-- Supervisor 서비스 구현
-
-### 4단계: 통합 및 테스트
-- 서비스 간 통합 테스트
-- 성능 테스트 및 최적화
-- 보안 검토 및 강화
-- 운영 준비성 검증
-
-### 5단계: 배포 및 모니터링
-- 단계적 프로덕션 배포
-- 모니터링 대시보드 구성
-- 알림 규칙 설정
-- 운영 매뉴얼 작성
-
 ## 기술적 고려사항
 
 ### 확장성
